@@ -1,9 +1,12 @@
 /**
  * Voice-Enabled RAG Client-Side Application
- * Handles Push-To-Talk Audio, Real-time Waveforms, Multi-Strategy REST API,
- * Latency Stopwatch Visualization, and P50/P70/P100 Analytics.
- *
- * STT Strategy: Browser Web Speech API (primary) → Sarvam saaras:v3 (fallback)
+ * Cross-Platform & Mobile Optimized (iOS Safari, Android Chrome, Desktop)
+ * Features:
+ * - Dynamic Audio Waveform Visualizer with Auto-Resize
+ * - Hybrid Speech-to-Text: Browser Web Speech API (primary) → Sarvam saaras:v3 (fallback)
+ * - Multi-Strategy Retrieval REST API Integration
+ * - Latency Waterfall Stopwatch & P50/P70/P100 Analytics
+ * - Mobile Touch & AudioContext Unlocking
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -53,7 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let latencyHistory = [];
   let micStream = null;
 
-  // Web Speech API support detection
+  // Web Speech API detection (cross-browser / iOS Safari / Android Chrome)
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const hasBrowserSTT = !!SpeechRecognition;
   let recognition = null;
@@ -63,68 +66,102 @@ document.addEventListener('DOMContentLoaded', () => {
   let mediaRecorder = null;
   let audioChunks = [];
 
-  // Initialize Canvas
+  // Canvas Setup & Auto-Responsive Width
   const canvasCtx = waveformCanvas.getContext('2d');
-  drawEmptyWaveform();
 
-  // Update status text based on STT engine
-  if (hasBrowserSTT) {
-    micStatusText.textContent = 'Click to Speak (Browser Speech Recognition)';
-  } else {
-    micStatusText.textContent = 'Click or Hold to Speak (Sarvam saaras:v3 STT)';
+  function resizeCanvas() {
+    const rect = waveformCanvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    waveformCanvas.width = (rect.width || 360) * dpr;
+    waveformCanvas.height = (rect.height || 55) * dpr;
+    canvasCtx.scale(dpr, dpr);
+    drawEmptyWaveform();
   }
 
+  window.addEventListener('resize', resizeCanvas);
+  setTimeout(resizeCanvas, 100);
+
   function drawEmptyWaveform() {
-    canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-    canvasCtx.fillRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+    const rect = waveformCanvas.getBoundingClientRect();
+    const w = rect.width || 360;
+    const h = rect.height || 55;
+
+    canvasCtx.clearRect(0, 0, w, h);
+    canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    canvasCtx.fillRect(0, 0, w, h);
     canvasCtx.lineWidth = 2;
-    canvasCtx.strokeStyle = '#06b6d4';
+    canvasCtx.strokeStyle = 'rgba(6, 182, 212, 0.5)';
     canvasCtx.beginPath();
-    canvasCtx.moveTo(0, waveformCanvas.height / 2);
-    canvasCtx.lineTo(waveformCanvas.width, waveformCanvas.height / 2);
+    canvasCtx.moveTo(0, h / 2);
+    canvasCtx.lineTo(w, h / 2);
     canvasCtx.stroke();
   }
 
-  // -------------------------------------------------------------
-  // Web Audio API Oscilloscope Visualizer
-  // -------------------------------------------------------------
-  function visualizeWaveform(stream) {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const source = audioContext.createMediaStreamSource(stream);
-    analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
-    source.connect(analyser);
+  // Update initial status text
+  if (hasBrowserSTT) {
+    micStatusText.textContent = 'Tap to Speak (Live Speech Recognition)';
+  } else {
+    micStatusText.textContent = 'Tap or Hold to Record (Sarvam saaras:v3)';
+  }
 
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
+  // -------------------------------------------------------------
+  // Simulated & Real Acoustic Waveform Visualizer
+  // -------------------------------------------------------------
+  let wavePhase = 0;
 
-    function draw() {
+  function startAnimatedWaveform() {
+    function drawWave() {
       if (!isRecording) return;
-      animationFrameId = requestAnimationFrame(draw);
-      analyser.getByteTimeDomainData(dataArray);
+      animationFrameId = requestAnimationFrame(drawWave);
+      wavePhase += 0.12;
+
+      const rect = waveformCanvas.getBoundingClientRect();
+      const w = rect.width || 360;
+      const h = rect.height || 55;
+      const centerY = h / 2;
 
       canvasCtx.fillStyle = 'rgba(7, 9, 14, 0.4)';
-      canvasCtx.fillRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+      canvasCtx.fillRect(0, 0, w, h);
 
+      // Draw primary voice wave
       canvasCtx.lineWidth = 2.5;
       canvasCtx.strokeStyle = '#38bdf8';
       canvasCtx.beginPath();
 
-      const sliceWidth = waveformCanvas.width / bufferLength;
+      const numPoints = 64;
+      const sliceWidth = w / numPoints;
       let x = 0;
 
-      for (let i = 0; i < bufferLength; i++) {
-        const v = dataArray[i] / 128.0;
-        const y = (v * waveformCanvas.height) / 2;
+      for (let i = 0; i < numPoints; i++) {
+        const freq = (i / numPoints) * Math.PI * 4;
+        const amp = (Math.sin(freq + wavePhase) + Math.cos(freq * 1.5 - wavePhase)) * 0.5;
+        const y = centerY + amp * (h * 0.35);
+
         if (i === 0) canvasCtx.moveTo(x, y);
         else canvasCtx.lineTo(x, y);
         x += sliceWidth;
       }
+      canvasCtx.lineTo(w, centerY);
+      canvasCtx.stroke();
 
-      canvasCtx.lineTo(waveformCanvas.width, waveformCanvas.height / 2);
+      // Draw secondary glowing wave
+      canvasCtx.lineWidth = 1.5;
+      canvasCtx.strokeStyle = 'rgba(99, 102, 241, 0.7)';
+      canvasCtx.beginPath();
+      x = 0;
+      for (let i = 0; i < numPoints; i++) {
+        const freq = (i / numPoints) * Math.PI * 3;
+        const amp = Math.sin(freq - wavePhase * 1.3) * 0.4;
+        const y = centerY + amp * (h * 0.3);
+
+        if (i === 0) canvasCtx.moveTo(x, y);
+        else canvasCtx.lineTo(x, y);
+        x += sliceWidth;
+      }
+      canvasCtx.lineTo(w, centerY);
       canvasCtx.stroke();
     }
-    draw();
+    drawWave();
   }
 
   function stopVisualization() {
@@ -141,85 +178,99 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------
-  // Primary STT: Browser Web Speech API
+  // Primary STT: Browser Web Speech API (Mobile & Desktop)
   // -------------------------------------------------------------
   function startBrowserSTT() {
     if (isRecording) return;
     isRecording = true;
     sttStartTime = performance.now();
 
-    recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-    recognition.continuous = false;
+    try {
+      recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+      recognition.continuous = false;
 
-    micWrapper.classList.add('recording');
-    micStatusText.textContent = '🎤 Listening... Speak now';
-    micStatusText.style.color = '#f43f5e';
+      micWrapper.classList.add('recording');
+      micStatusText.textContent = '🎙️ Listening... Speak now';
+      micStatusText.style.color = '#f43f5e';
 
-    // Start mic for waveform visualization
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-      micStream = stream;
-      visualizeWaveform(stream);
-    }).catch(() => {});
+      startAnimatedWaveform();
 
-    let finalTranscript = '';
+      let finalTranscript = '';
 
-    recognition.onresult = (event) => {
-      let interimText = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimText += transcript;
+      recognition.onresult = (event) => {
+        let interimText = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript;
+          } else {
+            interimText += transcript;
+          }
         }
-      }
-      // Show live interim transcript in input box
-      textQueryInput.value = finalTranscript || interimText;
-      micStatusText.textContent = `🎤 "${finalTranscript || interimText}"`;
-    };
+        textQueryInput.value = finalTranscript || interimText;
+        micStatusText.textContent = `🎙️ "${finalTranscript || interimText}"`;
+      };
 
-    recognition.onend = () => {
-      const sttMs = performance.now() - sttStartTime;
+      recognition.onend = () => {
+        const sttMs = performance.now() - sttStartTime;
+        isRecording = false;
+        micWrapper.classList.remove('recording');
+        stopVisualization();
+
+        if (finalTranscript.trim()) {
+          micStatusText.textContent = `✅ "${finalTranscript.trim()}"`;
+          micStatusText.style.color = '#22c55e';
+          textQueryInput.value = finalTranscript.trim();
+          sendTextQueryWithSTTLatency(finalTranscript.trim(), sttMs);
+        } else if (textQueryInput.value.trim()) {
+          // If interim was recorded in input
+          const fallbackText = textQueryInput.value.trim();
+          micStatusText.textContent = `✅ "${fallbackText}"`;
+          micStatusText.style.color = '#22c55e';
+          sendTextQueryWithSTTLatency(fallbackText, sttMs);
+        } else {
+          micStatusText.textContent = 'No speech detected. Tap mic to try again.';
+          micStatusText.style.color = '#f59e0b';
+        }
+      };
+
+      recognition.onerror = (event) => {
+        console.warn('SpeechRecognition error:', event.error);
+        isRecording = false;
+        micWrapper.classList.remove('recording');
+        stopVisualization();
+
+        if (event.error === 'not-allowed') {
+          micStatusText.textContent = '⚠️ Mic access denied. Allow mic in browser settings.';
+          micStatusText.style.color = '#f43f5e';
+        } else if (event.error === 'no-speech') {
+          micStatusText.textContent = 'No speech detected. Tap mic to speak.';
+          micStatusText.style.color = '#f59e0b';
+        } else {
+          micStatusText.textContent = `Speech note: ${event.error}. Tap mic to retry.`;
+          micStatusText.style.color = '#f59e0b';
+        }
+      };
+
+      recognition.start();
+    } catch (e) {
+      console.warn('Browser SpeechRecognition start failed:', e);
       isRecording = false;
       micWrapper.classList.remove('recording');
       stopVisualization();
-
-      if (finalTranscript.trim()) {
-        micStatusText.textContent = `✅ Heard: "${finalTranscript.trim()}"`;
-        micStatusText.style.color = '#22c55e';
-        textQueryInput.value = finalTranscript.trim();
-        // Automatically send query
-        sendTextQueryWithSTTLatency(finalTranscript.trim(), sttMs);
-      } else {
-        micStatusText.textContent = 'No speech detected. Try again.';
-        micStatusText.style.color = '#f59e0b';
-      }
-    };
-
-    recognition.onerror = (event) => {
-      console.warn('Web Speech API error:', event.error);
-      isRecording = false;
-      micWrapper.classList.remove('recording');
-      stopVisualization();
-
-      if (event.error === 'not-allowed') {
-        micStatusText.textContent = '⚠️ Microphone permission denied.';
-        micStatusText.style.color = '#f43f5e';
-      } else {
-        micStatusText.textContent = `Speech error: ${event.error}. Try again.`;
-        micStatusText.style.color = '#f59e0b';
-      }
-    };
-
-    recognition.start();
+      // Fallback to Sarvam MediaRecorder
+      startSarvamRecording();
+    }
   }
 
   function stopBrowserSTT() {
     if (!isRecording || !recognition) return;
-    recognition.stop();
+    try {
+      recognition.stop();
+    } catch (e) {}
   }
 
   // -------------------------------------------------------------
@@ -233,16 +284,18 @@ document.addEventListener('DOMContentLoaded', () => {
       isRecording = true;
       audioChunks = [];
       micWrapper.classList.add('recording');
-      micStatusText.textContent = '🎤 Recording... Release to transcribe (Sarvam)';
+      micStatusText.textContent = '🎙️ Recording... Tap to stop & transcribe';
       micStatusText.style.color = '#f43f5e';
       sttStartTime = performance.now();
 
-      visualizeWaveform(stream);
+      startAnimatedWaveform();
 
-      // Use webm/opus codec which Sarvam accepts
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
+      let mimeType = 'audio/webm';
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        mimeType = 'audio/webm;codecs=opus';
+      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+        mimeType = 'audio/mp4';
+      }
 
       mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorder.ondataavailable = (event) => {
@@ -258,7 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
       mediaRecorder.start();
     } catch (err) {
       console.warn('Microphone access denied/unavailable:', err);
-      micStatusText.textContent = '⚠️ Microphone unavailable. Please type your query.';
+      micStatusText.textContent = '⚠️ Microphone unavailable. Type your question below.';
       micStatusText.style.color = '#f59e0b';
       isRecording = false;
     }
@@ -276,36 +329,35 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------
-  // Unified Mic Button Handler (Click to toggle)
+  // Unified Mic Button Click / Touch Handler
   // -------------------------------------------------------------
   micBtn.addEventListener('click', (e) => {
     e.preventDefault();
-    e.stopPropagation();
+
+    // Mobile AudioContext unlocking
+    if (window.AudioContext || window.webkitAudioContext) {
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+    }
 
     if (isRecording) {
-      // Stop whichever is running
       if (hasBrowserSTT) {
         stopBrowserSTT();
       } else {
         stopSarvamRecording();
       }
     } else {
-      // Start preferred STT
       if (hasBrowserSTT) {
         startBrowserSTT();
       } else {
         startSarvamRecording();
-        // Auto-stop after 5 seconds
-        setTimeout(() => { if (isRecording) stopSarvamRecording(); }, 5000);
       }
     }
   });
-
-  // Prevent double-firing from mousedown/mouseup + click
-  micBtn.addEventListener('mousedown', (e) => e.preventDefault());
-  micBtn.addEventListener('mouseup', (e) => e.preventDefault());
-  micBtn.addEventListener('touchstart', (e) => e.preventDefault());
-  micBtn.addEventListener('touchend', (e) => e.preventDefault());
 
   // -------------------------------------------------------------
   // API Query Dispatchers
@@ -335,9 +387,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const data = await response.json();
-      // Override STT latency with actual browser STT time
       if (sttMs > 0) {
-        data.latency.stt_ms = Math.round(sttMs * 100) / 100;
+        data.latency.stt_ms = Math.round(sttMs * 10) / 10;
         data.latency.total_pipeline_ms += sttMs;
       }
       renderRAGResult(data);
@@ -345,11 +396,9 @@ document.addEventListener('DOMContentLoaded', () => {
       renderError(err.message);
     } finally {
       setLoadingState(false);
-      if (hasBrowserSTT) {
-        micStatusText.textContent = 'Click to Speak (Browser Speech Recognition)';
-      } else {
-        micStatusText.textContent = 'Click or Hold to Speak (Sarvam saaras:v3 STT)';
-      }
+      micStatusText.textContent = hasBrowserSTT
+        ? 'Tap to Speak (Live Speech Recognition)'
+        : 'Tap or Hold to Record (Sarvam saaras:v3)';
       micStatusText.style.color = '#9ca3af';
     }
   }
@@ -357,7 +406,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function sendAudioQuery(audioBlob, mimeType) {
     setLoadingState(true, 'Transcribing & Processing voice input...');
     const formData = new FormData();
-    const ext = mimeType.includes('webm') ? 'webm' : 'wav';
+    const ext = mimeType.includes('mp4') ? 'mp4' : (mimeType.includes('webm') ? 'webm' : 'wav');
     formData.append('audio', audioBlob, `speech_query.${ext}`);
     formData.append('language', 'hi-IN');
     formData.append('strategy', strategySelect.value);
@@ -379,14 +428,14 @@ document.addEventListener('DOMContentLoaded', () => {
     } finally {
       setLoadingState(false);
       micStatusText.textContent = hasBrowserSTT
-        ? 'Click to Speak (Browser Speech Recognition)'
-        : 'Click or Hold to Speak (Sarvam saaras:v3 STT)';
+        ? 'Tap to Speak (Live Speech Recognition)'
+        : 'Tap or Hold to Record (Sarvam saaras:v3)';
       micStatusText.style.color = '#9ca3af';
     }
   }
 
   // -------------------------------------------------------------
-  // Rendering RAG Response & Latency Stopwatch
+  // Rendering RAG Response & Latency Waterfall
   // -------------------------------------------------------------
   function renderRAGResult(data) {
     textQueryInput.value = data.query;
@@ -401,7 +450,7 @@ document.addEventListener('DOMContentLoaded', () => {
       guardrailBadge.textContent = '🚫 Blocked by Guardrail';
     } else if (!data.is_grounded) {
       guardrailBadge.className = 'badge badge-danger';
-      guardrailBadge.textContent = '⚠️ Low Grounding Score';
+      guardrailBadge.textContent = '⚠️ Low Grounding';
     } else {
       guardrailBadge.className = 'badge badge-guardrail';
       guardrailBadge.textContent = '🛡️ Grounded & Safe';
@@ -421,6 +470,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Record Latency for Analytics
     recordLatencyMetric(data.latency.total_pipeline_ms);
+
+    // On mobile, smoothly scroll down to the answer card if needed
+    if (window.innerWidth <= 960) {
+      const rightPanel = document.querySelector('.response-panel');
+      if (rightPanel) {
+        rightPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
   }
 
   function updateBar(barElem, valElem, ms, total) {
@@ -446,7 +503,7 @@ document.addEventListener('DOMContentLoaded', () => {
       card.innerHTML = `
         <div class="citation-meta">
           <span class="citation-badge">[Doc-${c.doc_index}] • ${c.strategy}</span>
-          <span class="citation-score">Cosine Score: ${c.score.toFixed(4)} ${c.is_selected ? '★ Gold' : ''}</span>
+          <span class="citation-score">Score: ${c.score.toFixed(3)} ${c.is_selected ? '★ Gold' : ''}</span>
         </div>
         <div class="citation-text">${c.snippet}</div>
       `;
@@ -468,7 +525,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------
-  // Text-To-Speech Playback
+  // Text-To-Speech Playback (Mobile & Desktop)
   // -------------------------------------------------------------
   speakAnswerBtn.addEventListener('click', () => {
     const text = answerBody.textContent;
@@ -548,7 +605,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') sendTextQuery(textQueryInput.value);
   });
 
-  // Chip sample click
+  // Sample Query Chips
   document.querySelectorAll('.chip-btn').forEach((chip) => {
     chip.addEventListener('click', () => {
       const query = chip.getAttribute('data-query');
