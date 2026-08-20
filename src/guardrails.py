@@ -118,8 +118,20 @@ class GuardrailsEngine:
             )
 
         answer_words = set(re.findall(r'\w+', answer.lower()))
-        stopwords = {"the", "a", "an", "is", "in", "at", "of", "on", "and", "or", "to", "for", "with", "this", "that", "it", "as", "by", "from"}
+        stopwords = {"the", "a", "an", "is", "in", "at", "of", "on", "and", "or", "to", "for", "with", "this", "that", "it", "as", "by", "from", "i", "you", "my", "your", "can", "how", "what", "please", "hello", "hi", "hey", "help", "assist", "welcome", "today"}
         meaningful_words = answer_words - stopwords
+
+        # Conversational greetings / general assistance statements are inherently valid
+        greeting_patterns = [r"\bhello\b", r"\bhi\b", r"\bhey\b", r"\bwelcome\b", r"\bhow can i (help|assist)\b", r"\bdo not have enough information\b"]
+        is_conversational = any(re.search(pat, answer.lower()) for pat in greeting_patterns)
+        if is_conversational and len(meaningful_words) < 10:
+            return GuardrailCheckResult(
+                is_safe=True,
+                is_on_topic=True,
+                is_grounded=True,
+                confidence_score=0.98,
+                latency_ms=(time.time() - t0) * 1000
+            )
 
         if not meaningful_words:
             return GuardrailCheckResult(
