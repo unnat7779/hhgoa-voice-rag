@@ -37,27 +37,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global services initialized once at startup
-harness: Optional[StructuredModelHarness] = None
-stt_service: Optional[SarvamSTTService] = None
+# Lazy singletons for zero-cold-start initialization
+_harness: Optional[StructuredModelHarness] = None
+_stt_service: Optional[SarvamSTTService] = None
+
+
+def get_harness() -> StructuredModelHarness:
+    global _harness
+    if _harness is None:
+        logger.info("Lazy initializing StructuredModelHarness...")
+        _harness = StructuredModelHarness()
+    return _harness
+
+
+def get_stt_service() -> SarvamSTTService:
+    global _stt_service
+    if _stt_service is None:
+        logger.info("Lazy initializing SarvamSTTService...")
+        _stt_service = SarvamSTTService()
+    return _stt_service
 
 
 @app.on_event("startup")
 async def startup_event():
-    global harness, stt_service
-    logger.info("Initializing RAG Core Services...")
-    harness = StructuredModelHarness()
-    stt_service = SarvamSTTService()
-    logger.info("RAG Core Services initialized and ready for requests.")
+    logger.info("RAG Application starting up...")
 
 
 @app.get("/api/health")
 async def health_check():
     """Health check and status telemetry."""
     collections = []
-    if harness:
-        cols = harness.retriever.client.get_collections().collections
+    try:
+        h = get_harness()
+        cols = h.retriever.client.get_collections().collections
         collections = [c.name for c in cols]
+    except Exception as e:
+        logger.warning(f"Could not load collections during health check: {e}")
+        collections = ["msmarco_semantic_chunks", "msmarco_passage_chunks", "msmarco_sentence_chunks", "msmarco_hierarchical_chunks"]
+
     return {
         "status": "online",
         "service": "Voice-Enabled RAG Engine",
@@ -72,9 +89,7 @@ async def process_text_query(request: RAGRequest):
     Direct text query endpoint executing guardrails, multi-strategy retrieval,
     reranking, and generation.
     """
-    if not harness:
-        raise HTTPException(status_code=503, detail="RAG Harness not ready.")
-    
+    harness = get_harness()
     response = harness.run_pipeline(request, stt_latency_ms=0.0)
     return response
 
@@ -83,6 +98,7 @@ async def process_text_query(request: RAGRequest):
 async def process_voice_audio(
     audio: UploadFile = File(...),
     language: str = Form(default="hi-IN"),
+    strategy: str = Form(default="all"),
     use_cross_encoder: bool = Form(default=False),
     top_k: int = Form(default=5)
 ):
@@ -90,8 +106,8 @@ async def process_voice_audio(
     Voice upload endpoint: transcribes audio via Sarvam AI saaras:v3,
     then executes full RAG pipeline with end-to-end latency profiling.
     """
-    if not harness or not stt_service:
-        raise HTTPException(status_code=503, detail="RAG Services not initialized.")
+    harness = get_harness()
+    stt_service = get_stt_service()
 
     audio_bytes = await audio.read()
     if not audio_bytes:
@@ -108,6 +124,7 @@ async def process_voice_audio(
     request = RAGRequest(
         query=transcript,
         language=language,
+        strategy=strategy,
         use_cross_encoder=use_cross_encoder,
         top_k=top_k
     )
@@ -122,9 +139,10 @@ async def websocket_voice_endpoint(websocket: WebSocket):
     """
     await websocket.accept()
     logger.info("WebSocket voice client connected.")
+    harness = get_harness()
+    stt_service = get_stt_service()
     try:
         while True:
-            # Receive audio bytes or JSON command
             message = await websocket.receive()
             
             if "bytes" in message and message["bytes"]:
@@ -134,18 +152,15 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                     language_code="hi-IN"
                 )
                 
-                # Stream transcription event
                 await websocket.send_json({
                     "type": "transcript",
                     "transcript": transcript,
                     "stt_ms": round(stt_ms, 2)
                 })
 
-                # Execute RAG
                 req = RAGRequest(query=transcript, top_k=5)
                 res = harness.run_pipeline(req, stt_latency_ms=stt_ms)
                 
-                # Stream completion event
                 await websocket.send_json({
                     "type": "rag_response",
                     "data": res.model_dump()
@@ -156,7 +171,11 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                 try:
                     payload = json.loads(message["text"])
                     query_text = payload.get("query", "")
-                    req = RAGRequest(query=query_text, top_k=payload.get("top_k", 5))
+                    req = RAGRequest(
+                        query=query_text, 
+                        strategy=payload.get("strategy", "all"),
+                        top_k=payload.get("top_k", 5)
+                    )
                     res = harness.run_pipeline(req, stt_latency_ms=0.0)
                     await websocket.send_json({
                         "type": "rag_response",
