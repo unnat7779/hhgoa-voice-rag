@@ -4,8 +4,9 @@ LLM Client integration with Groq Cloud (Llama 3.3 / Llama 3.1) and high-speed fa
 
 import os
 import time
+import re
 import logging
-from typing import List, Dict, Any, Optional, Generator
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from src.retriever import RetrievedDocument
 from src.config import GROQ_API_KEY, GROQ_MODEL_FAST, GROQ_MODEL_SMART
@@ -102,8 +103,6 @@ class GroqLLMClient:
                 finish_reason = completion.choices[0].finish_reason or "stop"
                 elapsed_ms = (time.time() - t0) * 1000
                 tokens = completion.usage.total_tokens if completion.usage else len(answer.split())
-
-                # Extract citations
                 citations = [f"Doc-{i+1}" for i, d in enumerate(documents) if f"Doc-{i+1}" in answer or f"[{i+1}]" in answer]
 
                 return LLMResponse(
@@ -117,7 +116,7 @@ class GroqLLMClient:
             except Exception as e:
                 logger.error(f"Groq API error: {e}. Utilizing synthesized local fallback.")
 
-        # Local deterministic synthesis fallback when API key is unavailable or during offline testing
+        # Local deterministic synthesis fallback
         return self._synthesize_fallback_answer(query, documents, t0)
 
     def _synthesize_fallback_answer(
@@ -130,13 +129,23 @@ class GroqLLMClient:
         Deterministic local synthesis engine extracting key facts from top retrieved contexts.
         """
         if not documents:
-            ans = "I could not find relevant information in the corpus to answer your question."
+            ans = "Based on the provided MSMARCO dataset, no relevant documents were found to answer this question."
             citations = []
         else:
             top_doc = documents[0]
-            # Form clean concise summary of top retrieved text
-            sentences = [s.strip() for s in top_doc.text.split(".") if len(s.strip()) > 10]
-            summary = ". ".join(sentences[:2]) + "." if sentences else top_doc.text[:200]
+            clean_text = top_doc.text.strip()
+            
+            # Extract most informative sentences
+            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', clean_text) if len(s.strip()) > 15]
+            if sentences:
+                selected_sentences = sentences[:2]
+                summary = " ".join(selected_sentences)
+            else:
+                summary = clean_text[:200]
+
+            if not summary.endswith('.'):
+                summary += '.'
+
             ans = f"{summary} [Doc-1]"
             citations = ["Doc-1"]
 
@@ -144,7 +153,7 @@ class GroqLLMClient:
         return LLMResponse(
             answer=ans,
             model="local-neural-synthesizer",
-            latency_ms=elapsed_ms,
+            latency_ms=round(elapsed_ms, 2),
             token_count=len(ans.split()),
             finish_reason="stop",
             grounded_citations=citations

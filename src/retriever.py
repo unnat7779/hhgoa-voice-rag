@@ -100,7 +100,11 @@ class MultiStrategyRetriever:
                 with open(jsonl_path, "r", encoding="utf-8") as f:
                     for line in f:
                         if line.strip():
-                            self.in_memory_passages.append(json.loads(line))
+                            item = json.loads(line)
+                            # Ensure 'text' field is populated
+                            if not item.get("text") and item.get("passage_text"):
+                                item["text"] = item["passage_text"]
+                            self.in_memory_passages.append(item)
                 logger.info(f"Loaded {len(self.in_memory_passages)} passages into in-memory serverless cache.")
             except Exception as e:
                 logger.warning(f"Could not load fallback corpus: {e}")
@@ -158,7 +162,7 @@ class MultiStrategyRetriever:
                         rrf_scores[key] = rrf_scores.get(key, 0.0) + rrf_increment
 
                         if key not in doc_map:
-                            chunk_text = payload.get("text", "")
+                            chunk_text = payload.get("text", "") or payload.get("passage_text", "")
                             parent_text = payload.get("parent_text")
                             
                             if expand_hierarchical_parents and payload.get("strategy") == "hierarchical_child" and parent_text:
@@ -199,34 +203,43 @@ class MultiStrategyRetriever:
         Sub-5ms in-memory serverless retrieval engine.
         """
         q_tokens = set(re.findall(r'\w+', query.lower()))
-        scores = []
+        # Remove common stop words for sharper matching
+        stopwords = {"what", "whats", "the", "is", "for", "a", "an", "in", "of", "to", "and", "or", "how", "why"}
+        meaningful_q_tokens = q_tokens - stopwords or q_tokens
 
+        scores = []
         for p in self.in_memory_passages:
-            text = p.get("passage_text", "")
+            text = p.get("text") or p.get("passage_text") or p.get("translated_text", "")
             p_tokens = Counter(re.findall(r'\w+', text.lower()))
-            overlap = sum(p_tokens[w] for w in q_tokens if w in p_tokens)
             
-            if overlap > 0 or p.get("is_selected", False):
-                score = (overlap * 0.25) + (0.35 if p.get("is_selected", False) else 0.0)
-                scores.append((score, p))
+            overlap = sum(p_tokens[w] for w in meaningful_q_tokens if w in p_tokens)
+            if overlap > 0:
+                score = (overlap * 0.4) + (0.3 if p.get("is_selected", False) else 0.0)
+                scores.append((score, p, text))
 
         scores.sort(key=lambda x: x[0], reverse=True)
-        top_items = scores[:top_k] if scores else [(0.8, p) for p in self.in_memory_passages[:top_k]]
+        top_items = scores[:top_k]
+        
+        # If no lexical match found, pick gold sample passages
+        if not top_items:
+            gold_items = [p for p in self.in_memory_passages if p.get("is_selected", False)]
+            chosen = gold_items[:top_k] if gold_items else self.in_memory_passages[:top_k]
+            top_items = [(0.5, p, p.get("text") or p.get("passage_text", "")) for p in chosen]
 
         docs = []
-        for i, (score, p) in enumerate(top_items, 1):
+        for i, (score, p, text) in enumerate(top_items, 1):
             docs.append(
                 RetrievedDocument(
                     doc_id=f"doc_{p.get('passage_id', i)}",
-                    text=p.get("passage_text", ""),
+                    text=text,
                     strategy=strategy if strategy != "all" else "passage_level",
                     score=round(1.0 + score, 4),
                     rrf_score=round(1.0 / (RRF_K_CONSTANT + i), 6),
-                    source_passage_id=p.get("passage_id", f"p_{i}"),
+                    source_passage_id=str(p.get("passage_id", f"p_{i}")),
                     query_id=str(p.get("query_id", "")),
                     query_type=p.get("query_type", "DESCRIPTION"),
                     is_selected=bool(p.get("is_selected", False)),
-                    token_count=len(p.get("passage_text", "").split()),
+                    token_count=len(text.split()),
                     metadata=p
                 )
             )
