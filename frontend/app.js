@@ -743,7 +743,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Sample Query Chips
-  document.querySelectorAll('.chip-btn').forEach((chip) => {
+  document.querySelectorAll('.chip, .chip-btn').forEach((chip) => {
     chip.addEventListener('click', () => {
       const query = chip.getAttribute('data-query');
       textQueryInput.value = query;
