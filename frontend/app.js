@@ -6,7 +6,7 @@
  * - Hybrid Speech-to-Text: Browser Web Speech API (primary) → Sarvam saaras:v3 (fallback)
  * - Multi-Strategy Retrieval REST API Integration
  * - Latency Waterfall Stopwatch & P50/P70/P100 Analytics
- * - Mobile Touch & AudioContext Unlocking
+ * - Real-Time Word Highlighting & Play/Stop Controls for Speech-to-Text Playback
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const guardrailBadge = document.getElementById('guardrailBadge');
   const totalLatencyBadge = document.getElementById('totalLatencyBadge');
   const speakAnswerBtn = document.getElementById('speakAnswerBtn');
+  const stopSpeakBtn = document.getElementById('stopSpeakBtn');
   const citationsGrid = document.getElementById('citationsGrid');
   const citationCount = document.getElementById('citationCount');
   const runBenchmarkBtn = document.getElementById('runBenchmarkBtn');
@@ -51,10 +52,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // State
   let isRecording = false;
   let audioContext = null;
-  let analyser = null;
   let animationFrameId = null;
   let latencyHistory = [];
   let micStream = null;
+
+  // TTS State & Synchronized Highlighting
+  let currentAnswerRawText = '';
+  let wordSpans = [];
+  let currentUtterance = null;
+  let isSpeaking = false;
 
   // Web Speech API detection (cross-browser / iOS Safari / Android Chrome)
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -226,7 +232,6 @@ document.addEventListener('DOMContentLoaded', () => {
           textQueryInput.value = finalTranscript.trim();
           sendTextQueryWithSTTLatency(finalTranscript.trim(), sttMs);
         } else if (textQueryInput.value.trim()) {
-          // If interim was recorded in input
           const fallbackText = textQueryInput.value.trim();
           micStatusText.textContent = `✅ "${fallbackText}"`;
           micStatusText.style.color = '#22c55e';
@@ -261,7 +266,6 @@ document.addEventListener('DOMContentLoaded', () => {
       isRecording = false;
       micWrapper.classList.remove('recording');
       stopVisualization();
-      // Fallback to Sarvam MediaRecorder
       startSarvamRecording();
     }
   }
@@ -334,7 +338,6 @@ document.addEventListener('DOMContentLoaded', () => {
   micBtn.addEventListener('click', (e) => {
     e.preventDefault();
 
-    // Mobile AudioContext unlocking
     if (window.AudioContext || window.webkitAudioContext) {
       if (!audioContext) {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -369,6 +372,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function sendTextQueryWithSTTLatency(queryText, sttMs) {
     if (!queryText.trim()) return;
 
+    stopSpeaking();
     setLoadingState(true, queryText);
     const useCrossEncoder = rerankToggle.checked;
     const strategy = strategySelect.value;
@@ -404,6 +408,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function sendAudioQuery(audioBlob, mimeType) {
+    stopSpeaking();
     setLoadingState(true, 'Transcribing & Processing voice input...');
     const formData = new FormData();
     const ext = mimeType.includes('mp4') ? 'mp4' : (mimeType.includes('webm') ? 'webm' : 'wav');
@@ -435,11 +440,56 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------
+  // Synchronized Word Highlighting Renderer
+  // -------------------------------------------------------------
+  function renderAnswerWithHighlightSpans(rawText) {
+    currentAnswerRawText = rawText;
+    wordSpans = [];
+    answerBody.innerHTML = '';
+
+    const regex = /(\S+)/g;
+    let match;
+    let lastIndex = 0;
+    let wordIdx = 0;
+
+    while ((match = regex.exec(rawText)) !== null) {
+      if (match.index > lastIndex) {
+        const nonWord = rawText.substring(lastIndex, match.index);
+        answerBody.appendChild(document.createTextNode(nonWord));
+      }
+
+      const wordStr = match[0];
+      const span = document.createElement('span');
+      span.className = 'tts-word';
+      span.textContent = wordStr;
+      span.id = `tts-word-${wordIdx}`;
+      span.dataset.start = match.index;
+      span.dataset.end = match.index + wordStr.length;
+      span.dataset.idx = wordIdx;
+
+      wordSpans.push({
+        elem: span,
+        start: match.index,
+        end: match.index + wordStr.length,
+        idx: wordIdx
+      });
+
+      answerBody.appendChild(span);
+      lastIndex = regex.lastIndex;
+      wordIdx++;
+    }
+
+    if (lastIndex < rawText.length) {
+      answerBody.appendChild(document.createTextNode(rawText.substring(lastIndex)));
+    }
+  }
+
+  // -------------------------------------------------------------
   // Rendering RAG Response & Latency Waterfall
   // -------------------------------------------------------------
   function renderRAGResult(data) {
     textQueryInput.value = data.query;
-    answerBody.textContent = data.answer;
+    renderAnswerWithHighlightSpans(data.answer);
 
     // Badges
     modelBadge.textContent = data.model_used;
@@ -471,11 +521,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Record Latency for Analytics
     recordLatencyMetric(data.latency.total_pipeline_ms);
 
-    // On mobile, smoothly scroll down to the answer card if needed
+    // On mobile, smoothly scroll down to the answer card
     if (window.innerWidth <= 960) {
-      const rightPanel = document.querySelector('.response-panel');
-      if (rightPanel) {
-        rightPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const resultPanel = document.querySelector('.result-panel');
+      if (resultPanel) {
+        resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     }
   }
@@ -512,6 +562,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderError(msg) {
+    stopSpeaking();
     answerBody.textContent = `Error: ${msg}`;
     guardrailBadge.className = 'badge badge-danger';
     guardrailBadge.textContent = '❌ System Error';
@@ -519,22 +570,108 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function setLoadingState(isLoading, queryText = '') {
     if (isLoading) {
+      stopSpeaking();
       answerBody.textContent = `Processing: "${queryText}"...`;
       totalLatencyBadge.textContent = '⏱️ Running...';
     }
   }
 
   // -------------------------------------------------------------
-  // Text-To-Speech Playback (Mobile & Desktop)
+  // Text-To-Speech Playback with Word Sync & Stop Controls
   // -------------------------------------------------------------
-  speakAnswerBtn.addEventListener('click', () => {
-    const text = answerBody.textContent;
-    if (!text || !('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.05;
-    window.speechSynthesis.speak(utterance);
-  });
+  function stopSpeaking() {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    isSpeaking = false;
+    speakAnswerBtn.classList.remove('speaking');
+    speakAnswerBtn.style.display = 'inline-flex';
+    if (stopSpeakBtn) stopSpeakBtn.style.display = 'none';
+
+    wordSpans.forEach(w => {
+      w.elem.classList.remove('active-word');
+      w.elem.classList.remove('spoken-word');
+    });
+  }
+
+  function startSpeaking() {
+    if (!('speechSynthesis' in window)) return;
+    stopSpeaking();
+
+    const text = currentAnswerRawText || answerBody.textContent;
+    if (!text || !text.trim()) return;
+
+    currentUtterance = new SpeechSynthesisUtterance(text);
+    currentUtterance.rate = 1.0;
+    currentUtterance.pitch = 1.0;
+
+    isSpeaking = true;
+    speakAnswerBtn.classList.add('speaking');
+    speakAnswerBtn.style.display = 'none';
+    if (stopSpeakBtn) stopSpeakBtn.style.display = 'inline-flex';
+
+    currentUtterance.onboundary = (event) => {
+      if (!isSpeaking) return;
+      const charIdx = event.charIndex;
+
+      let found = false;
+      for (let i = 0; i < wordSpans.length; i++) {
+        const w = wordSpans[i];
+        if (charIdx >= w.start && charIdx < w.end) {
+          w.elem.classList.add('active-word');
+          w.elem.classList.remove('spoken-word');
+          found = true;
+        } else if (w.start < charIdx) {
+          w.elem.classList.remove('active-word');
+          w.elem.classList.add('spoken-word');
+        } else {
+          w.elem.classList.remove('active-word');
+          w.elem.classList.remove('spoken-word');
+        }
+      }
+
+      if (!found && wordSpans.length > 0) {
+        // Find nearest span
+        let closest = wordSpans[0];
+        let minDiff = Math.abs(wordSpans[0].start - charIdx);
+        for (let i = 1; i < wordSpans.length; i++) {
+          const diff = Math.abs(wordSpans[i].start - charIdx);
+          if (diff < minDiff) {
+            minDiff = diff;
+            closest = wordSpans[i];
+          }
+        }
+        wordSpans.forEach(w => {
+          if (w.idx === closest.idx) {
+            w.elem.classList.add('active-word');
+            w.elem.classList.remove('spoken-word');
+          } else if (w.start < closest.start) {
+            w.elem.classList.remove('active-word');
+            w.elem.classList.add('spoken-word');
+          } else {
+            w.elem.classList.remove('active-word');
+            w.elem.classList.remove('spoken-word');
+          }
+        });
+      }
+    };
+
+    currentUtterance.onend = () => {
+      stopSpeaking();
+    };
+
+    currentUtterance.onerror = (e) => {
+      console.warn('Speech synthesis error:', e);
+      stopSpeaking();
+    };
+
+    window.speechSynthesis.speak(currentUtterance);
+  }
+
+  speakAnswerBtn.addEventListener('click', startSpeaking);
+  if (stopSpeakBtn) {
+    stopSpeakBtn.addEventListener('click', stopSpeaking);
+  }
 
   // -------------------------------------------------------------
   // Analytics: P50 / P70 / P100 Calculation
