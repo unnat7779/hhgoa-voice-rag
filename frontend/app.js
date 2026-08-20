@@ -1,16 +1,22 @@
 /**
- * Voice-Enabled RAG Client-Side Application
- * Cross-Platform & Mobile Optimized (iOS Safari, Android Chrome, Desktop)
+ * HH GOA 2026 • Task #02 Voice-Enabled RAG Console
+ * Cyberpunk Developer Console × Underground Hackathon
  * Features:
- * - Dynamic Audio Waveform Visualizer with Auto-Resize
- * - Hybrid Speech-to-Text: Browser Web Speech API (primary) → Sarvam saaras:v3 (fallback)
+ * - Dynamic Audio Waveform Visualizer
+ * - Hybrid Speech-to-Text: Browser Web Speech API → Sarvam fallback
  * - Multi-Strategy Retrieval REST API Integration
- * - Latency Waterfall Stopwatch & P50/P70/P100 Analytics
- * - Real-Time Word Highlighting & Play/Stop Controls for Speech-to-Text Playback
+ * - Mission Control Status Stages & Target <200ms Latency Pipeline
+ * - Real-Time Synchronized Word Highlighting & Play/Stop Controls
+ * - Hackathon Scoreboard & Challenge Brief Collapsible Bar
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // DOM Elements
+  // DOM Elements: Challenge Brief
+  const briefToggleBtn = document.getElementById('briefToggleBtn');
+  const briefContent = document.getElementById('briefContent');
+  const briefArrow = document.getElementById('briefArrow');
+
+  // DOM Elements: Left Console
   const micBtn = document.getElementById('micBtn');
   const micWrapper = document.getElementById('micWrapper');
   const micStatusText = document.getElementById('micStatusText');
@@ -19,17 +25,22 @@ document.addEventListener('DOMContentLoaded', () => {
   const sendQueryBtn = document.getElementById('sendQueryBtn');
   const strategySelect = document.getElementById('strategySelect');
   const rerankToggle = document.getElementById('rerankToggle');
-  const answerBody = document.getElementById('answerBody');
+
+  // DOM Elements: Right Panel (Mission Control)
+  const statusLed = document.getElementById('statusLed');
+  const statusLedText = document.getElementById('statusLedText');
   const modelBadge = document.getElementById('modelBadge');
   const guardrailBadge = document.getElementById('guardrailBadge');
   const totalLatencyBadge = document.getElementById('totalLatencyBadge');
+  const answerBody = document.getElementById('answerBody');
   const speakAnswerBtn = document.getElementById('speakAnswerBtn');
   const stopSpeakBtn = document.getElementById('stopSpeakBtn');
-  const citationsGrid = document.getElementById('citationsGrid');
-  const citationCount = document.getElementById('citationCount');
-  const runBenchmarkBtn = document.getElementById('runBenchmarkBtn');
 
-  // Latency Bars
+  // Hero Latency Scoreboard Callout
+  const heroTotalMs = document.getElementById('heroTotalMs');
+  const targetAchievementTag = document.getElementById('targetAchievementTag');
+
+  // Latency Meter Bars
   const barSTT = document.getElementById('barSTT');
   const valSTT = document.getElementById('valSTT');
   const barGuard = document.getElementById('barGuard');
@@ -43,11 +54,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const barPost = document.getElementById('barPost');
   const valPost = document.getElementById('valPost');
 
-  // Footer Analytics Metrics
+  // Citations Grid
+  const citationsGrid = document.getElementById('citationsGrid');
+  const citationCount = document.getElementById('citationCount');
+
+  // Scoreboard Metrics & Actions
   const p50Val = document.getElementById('p50Val');
   const p70Val = document.getElementById('p70Val');
   const p100Val = document.getElementById('p100Val');
   const totalQueriesVal = document.getElementById('totalQueriesVal');
+  const runBenchmarkBtn = document.getElementById('runBenchmarkBtn');
+  const submitRunBtn = document.getElementById('submitRunBtn');
 
   // State
   let isRecording = false;
@@ -68,18 +85,37 @@ document.addEventListener('DOMContentLoaded', () => {
   let recognition = null;
   let sttStartTime = 0;
 
-  // MediaRecorder for Sarvam fallback
+  // MediaRecorder for fallback
   let mediaRecorder = null;
   let audioChunks = [];
 
+  // -------------------------------------------------------------
+  // Challenge Brief Collapse / Expand
+  // -------------------------------------------------------------
+  if (briefToggleBtn && briefContent) {
+    let isBriefOpen = true;
+    briefToggleBtn.addEventListener('click', () => {
+      isBriefOpen = !isBriefOpen;
+      if (isBriefOpen) {
+        briefContent.style.display = 'flex';
+        briefArrow.textContent = '▲ COLLAPSE';
+      } else {
+        briefContent.style.display = 'none';
+        briefArrow.textContent = '▼ EXPAND';
+      }
+    });
+  }
+
+  // -------------------------------------------------------------
   // Canvas Setup & Auto-Responsive Width
+  // -------------------------------------------------------------
   const canvasCtx = waveformCanvas.getContext('2d');
 
   function resizeCanvas() {
     const rect = waveformCanvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     waveformCanvas.width = (rect.width || 360) * dpr;
-    waveformCanvas.height = (rect.height || 55) * dpr;
+    waveformCanvas.height = (rect.height || 48) * dpr;
     canvasCtx.scale(dpr, dpr);
     drawEmptyWaveform();
   }
@@ -90,24 +126,17 @@ document.addEventListener('DOMContentLoaded', () => {
   function drawEmptyWaveform() {
     const rect = waveformCanvas.getBoundingClientRect();
     const w = rect.width || 360;
-    const h = rect.height || 55;
+    const h = rect.height || 48;
 
     canvasCtx.clearRect(0, 0, w, h);
-    canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.4)';
     canvasCtx.fillRect(0, 0, w, h);
-    canvasCtx.lineWidth = 2;
-    canvasCtx.strokeStyle = 'rgba(6, 182, 212, 0.5)';
+    canvasCtx.lineWidth = 1.5;
+    canvasCtx.strokeStyle = 'rgba(0, 230, 118, 0.4)';
     canvasCtx.beginPath();
     canvasCtx.moveTo(0, h / 2);
     canvasCtx.lineTo(w, h / 2);
     canvasCtx.stroke();
-  }
-
-  // Update initial status text
-  if (hasBrowserSTT) {
-    micStatusText.textContent = 'Tap to Speak (Live Speech Recognition)';
-  } else {
-    micStatusText.textContent = 'Tap or Hold to Record (Sarvam saaras:v3)';
   }
 
   // -------------------------------------------------------------
@@ -119,19 +148,19 @@ document.addEventListener('DOMContentLoaded', () => {
     function drawWave() {
       if (!isRecording) return;
       animationFrameId = requestAnimationFrame(drawWave);
-      wavePhase += 0.12;
+      wavePhase += 0.14;
 
       const rect = waveformCanvas.getBoundingClientRect();
       const w = rect.width || 360;
-      const h = rect.height || 55;
+      const h = rect.height || 48;
       const centerY = h / 2;
 
-      canvasCtx.fillStyle = 'rgba(7, 9, 14, 0.4)';
+      canvasCtx.fillStyle = 'rgba(5, 7, 11, 0.4)';
       canvasCtx.fillRect(0, 0, w, h);
 
-      // Draw primary voice wave
-      canvasCtx.lineWidth = 2.5;
-      canvasCtx.strokeStyle = '#38bdf8';
+      // Primary Hacker Green Wave
+      canvasCtx.lineWidth = 2;
+      canvasCtx.strokeStyle = '#00E676';
       canvasCtx.beginPath();
 
       const numPoints = 64;
@@ -150,9 +179,9 @@ document.addEventListener('DOMContentLoaded', () => {
       canvasCtx.lineTo(w, centerY);
       canvasCtx.stroke();
 
-      // Draw secondary glowing wave
-      canvasCtx.lineWidth = 1.5;
-      canvasCtx.strokeStyle = 'rgba(99, 102, 241, 0.7)';
+      // Secondary Hackathon Orange Glowing Wave
+      canvasCtx.lineWidth = 1.2;
+      canvasCtx.strokeStyle = 'rgba(255, 122, 0, 0.7)';
       canvasCtx.beginPath();
       x = 0;
       for (let i = 0; i < numPoints; i++) {
@@ -184,7 +213,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------
-  // Primary STT: Browser Web Speech API (Mobile & Desktop)
+  // Speech-to-Text: Browser Web Speech API
   // -------------------------------------------------------------
   function startBrowserSTT() {
     if (isRecording) return;
@@ -199,8 +228,9 @@ document.addEventListener('DOMContentLoaded', () => {
       recognition.continuous = false;
 
       micWrapper.classList.add('recording');
-      micStatusText.textContent = '🎙️ Listening... Speak now';
-      micStatusText.style.color = '#f43f5e';
+      micStatusText.textContent = 'LISTENING... SPEAK NOW';
+      micStatusText.style.color = '#FF2D8D';
+      setLiveStatus('● LISTENING...', 'active');
 
       startAnimatedWaveform();
 
@@ -217,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
         textQueryInput.value = finalTranscript || interimText;
-        micStatusText.textContent = `🎙️ "${finalTranscript || interimText}"`;
+        micStatusText.textContent = `"${(finalTranscript || interimText).substring(0, 32)}..."`;
       };
 
       recognition.onend = () => {
@@ -227,18 +257,19 @@ document.addEventListener('DOMContentLoaded', () => {
         stopVisualization();
 
         if (finalTranscript.trim()) {
-          micStatusText.textContent = `✅ "${finalTranscript.trim()}"`;
-          micStatusText.style.color = '#22c55e';
+          micStatusText.textContent = `HEARD: "${finalTranscript.trim().substring(0, 24)}"`;
+          micStatusText.style.color = '#00E676';
           textQueryInput.value = finalTranscript.trim();
           sendTextQueryWithSTTLatency(finalTranscript.trim(), sttMs);
         } else if (textQueryInput.value.trim()) {
           const fallbackText = textQueryInput.value.trim();
-          micStatusText.textContent = `✅ "${fallbackText}"`;
-          micStatusText.style.color = '#22c55e';
+          micStatusText.textContent = `HEARD: "${fallbackText.substring(0, 24)}"`;
+          micStatusText.style.color = '#00E676';
           sendTextQueryWithSTTLatency(fallbackText, sttMs);
         } else {
-          micStatusText.textContent = 'No speech detected. Tap mic to try again.';
-          micStatusText.style.color = '#f59e0b';
+          micStatusText.textContent = 'TAP TO SPEAK (EN / HI)';
+          micStatusText.style.color = '#718096';
+          setLiveStatus('SYSTEM READY', 'green');
         }
       };
 
@@ -249,20 +280,18 @@ document.addEventListener('DOMContentLoaded', () => {
         stopVisualization();
 
         if (event.error === 'not-allowed') {
-          micStatusText.textContent = '⚠️ Mic access denied. Allow mic in browser settings.';
-          micStatusText.style.color = '#f43f5e';
-        } else if (event.error === 'no-speech') {
-          micStatusText.textContent = 'No speech detected. Tap mic to speak.';
-          micStatusText.style.color = '#f59e0b';
+          micStatusText.textContent = 'MIC ACCESS DENIED';
+          micStatusText.style.color = '#F43F5E';
         } else {
-          micStatusText.textContent = `Speech note: ${event.error}. Tap mic to retry.`;
-          micStatusText.style.color = '#f59e0b';
+          micStatusText.textContent = 'TAP TO SPEAK (EN / HI)';
+          micStatusText.style.color = '#718096';
         }
+        setLiveStatus('SYSTEM READY', 'green');
       };
 
       recognition.start();
     } catch (e) {
-      console.warn('Browser SpeechRecognition start failed:', e);
+      console.warn('SpeechRecognition start failed, trying fallback:', e);
       isRecording = false;
       micWrapper.classList.remove('recording');
       stopVisualization();
@@ -272,13 +301,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function stopBrowserSTT() {
     if (!isRecording || !recognition) return;
-    try {
-      recognition.stop();
-    } catch (e) {}
+    try { recognition.stop(); } catch (e) {}
   }
 
   // -------------------------------------------------------------
-  // Fallback STT: Sarvam API via MediaRecorder
+  // Fallback STT: Sarvam / MediaRecorder
   // -------------------------------------------------------------
   async function startSarvamRecording() {
     if (isRecording) return;
@@ -288,8 +315,9 @@ document.addEventListener('DOMContentLoaded', () => {
       isRecording = true;
       audioChunks = [];
       micWrapper.classList.add('recording');
-      micStatusText.textContent = '🎙️ Recording... Tap to stop & transcribe';
-      micStatusText.style.color = '#f43f5e';
+      micStatusText.textContent = 'RECORDING... TAP TO STOP';
+      micStatusText.style.color = '#FF2D8D';
+      setLiveStatus('● RECORDING...', 'active');
       sttStartTime = performance.now();
 
       startAnimatedWaveform();
@@ -314,10 +342,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       mediaRecorder.start();
     } catch (err) {
-      console.warn('Microphone access denied/unavailable:', err);
-      micStatusText.textContent = '⚠️ Microphone unavailable. Type your question below.';
-      micStatusText.style.color = '#f59e0b';
+      console.warn('Microphone access denied:', err);
+      micStatusText.textContent = 'MIC UNAVAILABLE • TYPE BELOW';
+      micStatusText.style.color = '#FF7A00';
       isRecording = false;
+      setLiveStatus('SYSTEM READY', 'green');
     }
   }
 
@@ -325,19 +354,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!isRecording) return;
     isRecording = false;
     micWrapper.classList.remove('recording');
-    micStatusText.textContent = '⏳ Transcribing with Sarvam AI...';
-    micStatusText.style.color = '#06b6d4';
+    micStatusText.textContent = 'TRANSCRIBING...';
+    micStatusText.style.color = '#00BFA5';
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       mediaRecorder.stop();
     }
   }
 
   // -------------------------------------------------------------
-  // Unified Mic Button Click / Touch Handler
+  // Unified Mic Button Click / Touch
   // -------------------------------------------------------------
   micBtn.addEventListener('click', (e) => {
     e.preventDefault();
 
+    // Mobile AudioContext Unlocking
     if (window.AudioContext || window.webkitAudioContext) {
       if (!audioContext) {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -348,19 +378,32 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (isRecording) {
-      if (hasBrowserSTT) {
-        stopBrowserSTT();
-      } else {
-        stopSarvamRecording();
-      }
+      if (hasBrowserSTT) stopBrowserSTT();
+      else stopSarvamRecording();
     } else {
-      if (hasBrowserSTT) {
-        startBrowserSTT();
-      } else {
-        startSarvamRecording();
-      }
+      if (hasBrowserSTT) startBrowserSTT();
+      else startSarvamRecording();
     }
   });
+
+  // -------------------------------------------------------------
+  // Live Status Indicator Helper
+  // -------------------------------------------------------------
+  function setLiveStatus(text, mode = 'green') {
+    statusLedText.textContent = text;
+    if (mode === 'active') {
+      statusLed.className = 'status-led led-active';
+      statusLedText.style.color = '#FF7A00';
+    } else if (mode === 'danger') {
+      statusLed.className = 'status-led';
+      statusLed.style.background = '#F43F5E';
+      statusLedText.style.color = '#F43F5E';
+    } else {
+      statusLed.className = 'status-led';
+      statusLed.style.background = '#00E676';
+      statusLedText.style.color = '#00E676';
+    }
+  }
 
   // -------------------------------------------------------------
   // API Query Dispatchers
@@ -373,11 +416,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!queryText.trim()) return;
 
     stopSpeaking();
+    setLiveStatus('● RETRIEVING...', 'active');
     setLoadingState(true, queryText);
     const useCrossEncoder = rerankToggle.checked;
     const strategy = strategySelect.value;
 
     try {
+      setLiveStatus('● GENERATING...', 'active');
       const response = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -396,20 +441,21 @@ document.addEventListener('DOMContentLoaded', () => {
         data.latency.total_pipeline_ms += sttMs;
       }
       renderRAGResult(data);
+      setLiveStatus('● GROUNDED', 'green');
     } catch (err) {
       renderError(err.message);
+      setLiveStatus('SYSTEM ERROR', 'danger');
     } finally {
       setLoadingState(false);
-      micStatusText.textContent = hasBrowserSTT
-        ? 'Tap to Speak (Live Speech Recognition)'
-        : 'Tap or Hold to Record (Sarvam saaras:v3)';
-      micStatusText.style.color = '#9ca3af';
+      micStatusText.textContent = 'TAP TO SPEAK (EN / HI)';
+      micStatusText.style.color = '#718096';
     }
   }
 
   async function sendAudioQuery(audioBlob, mimeType) {
     stopSpeaking();
-    setLoadingState(true, 'Transcribing & Processing voice input...');
+    setLiveStatus('● TRANSCRIBING...', 'active');
+    setLoadingState(true, 'Transcribing voice input...');
     const formData = new FormData();
     const ext = mimeType.includes('mp4') ? 'mp4' : (mimeType.includes('webm') ? 'webm' : 'wav');
     formData.append('audio', audioBlob, `speech_query.${ext}`);
@@ -424,18 +470,18 @@ document.addEventListener('DOMContentLoaded', () => {
         body: formData
       });
 
-      if (!response.ok) throw new Error(`Voice HTTP error! status: ${response.status}`);
+      if (!response.ok) throw new Error(`Voice error! status: ${response.status}`);
       const data = await response.json();
       textQueryInput.value = data.query;
       renderRAGResult(data);
+      setLiveStatus('● GROUNDED', 'green');
     } catch (err) {
       renderError(err.message);
+      setLiveStatus('SYSTEM ERROR', 'danger');
     } finally {
       setLoadingState(false);
-      micStatusText.textContent = hasBrowserSTT
-        ? 'Tap to Speak (Live Speech Recognition)'
-        : 'Tap or Hold to Record (Sarvam saaras:v3)';
-      micStatusText.style.color = '#9ca3af';
+      micStatusText.textContent = 'TAP TO SPEAK (EN / HI)';
+      micStatusText.style.color = '#718096';
     }
   }
 
@@ -485,7 +531,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------
-  // Rendering RAG Response & Latency Waterfall
+  // Rendering RAG Result & Latency Pipeline
   // -------------------------------------------------------------
   function renderRAGResult(data) {
     textQueryInput.value = data.query;
@@ -495,19 +541,31 @@ document.addEventListener('DOMContentLoaded', () => {
     modelBadge.textContent = data.model_used;
     totalLatencyBadge.textContent = `⏱️ ${data.latency.total_pipeline_ms.toFixed(1)} ms`;
 
+    // Hero Total Latency Callout
+    const totalMs = data.latency.total_pipeline_ms;
+    heroTotalMs.textContent = totalMs.toFixed(1);
+
+    if (totalMs <= 200) {
+      targetAchievementTag.textContent = '✓ TARGET ACHIEVED (<200ms)';
+      targetAchievementTag.style.color = '#00E676';
+    } else {
+      targetAchievementTag.textContent = `⚠️ +${(totalMs - 200).toFixed(0)}ms OVER TARGET`;
+      targetAchievementTag.style.color = '#FF7A00';
+    }
+
     if (!data.is_safe) {
-      guardrailBadge.className = 'badge badge-danger';
+      guardrailBadge.className = 'tag-badge tag-danger';
       guardrailBadge.textContent = '🚫 Blocked by Guardrail';
     } else if (!data.is_grounded) {
-      guardrailBadge.className = 'badge badge-danger';
+      guardrailBadge.className = 'tag-badge tag-danger';
       guardrailBadge.textContent = '⚠️ Low Grounding';
     } else {
-      guardrailBadge.className = 'badge badge-guardrail';
+      guardrailBadge.className = 'tag-badge tag-grounded';
       guardrailBadge.textContent = '🛡️ Grounded & Safe';
     }
 
     // Update Latency Waterfall Bars
-    const total = Math.max(1, data.latency.total_pipeline_ms);
+    const total = Math.max(1, totalMs);
     updateBar(barSTT, valSTT, data.latency.stt_ms, total);
     updateBar(barGuard, valGuard, data.latency.pre_guardrail_ms, total);
     updateBar(barRet, valRet, data.latency.retrieval_ms, total);
@@ -515,17 +573,17 @@ document.addEventListener('DOMContentLoaded', () => {
     updateBar(barLLM, valLLM, data.latency.llm_generation_ms, total);
     updateBar(barPost, valPost, data.latency.post_guardrail_ms, total);
 
-    // Update Citations Grid
+    // Update Citations
     renderCitations(data.citations);
 
-    // Record Latency for Analytics
-    recordLatencyMetric(data.latency.total_pipeline_ms);
+    // Record Latency for Scoreboard
+    recordLatencyMetric(totalMs);
 
-    // On mobile, smoothly scroll down to the answer card
+    // Mobile scroll to answer
     if (window.innerWidth <= 960) {
-      const resultPanel = document.querySelector('.result-panel');
-      if (resultPanel) {
-        resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const responsePanel = document.querySelector('.response-panel');
+      if (responsePanel) {
+        responsePanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     }
   }
@@ -540,12 +598,12 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderCitations(citations) {
     citationsGrid.innerHTML = '';
     if (!citations || citations.length === 0) {
-      citationCount.textContent = '0 Sources';
-      citationsGrid.innerHTML = '<div class="citation-empty">No external documents cited for this response.</div>';
+      citationCount.textContent = '0 SOURCES';
+      citationsGrid.innerHTML = '<div class="citation-empty">No context documents cited for this query.</div>';
       return;
     }
 
-    citationCount.textContent = `${citations.length} Grounded Source${citations.length > 1 ? 's' : ''}`;
+    citationCount.textContent = `${citations.length} SOURCES`;
 
     citations.forEach((c) => {
       const card = document.createElement('div');
@@ -553,7 +611,7 @@ document.addEventListener('DOMContentLoaded', () => {
       card.innerHTML = `
         <div class="citation-meta">
           <span class="citation-badge">[Doc-${c.doc_index}] • ${c.strategy}</span>
-          <span class="citation-score">Score: ${c.score.toFixed(3)} ${c.is_selected ? '★ Gold' : ''}</span>
+          <span class="citation-score">Cosine: ${c.score.toFixed(3)} ${c.is_selected ? '★ Gold' : ''}</span>
         </div>
         <div class="citation-text">${c.snippet}</div>
       `;
@@ -564,14 +622,14 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderError(msg) {
     stopSpeaking();
     answerBody.textContent = `Error: ${msg}`;
-    guardrailBadge.className = 'badge badge-danger';
+    guardrailBadge.className = 'tag-badge tag-danger';
     guardrailBadge.textContent = '❌ System Error';
   }
 
   function setLoadingState(isLoading, queryText = '') {
     if (isLoading) {
       stopSpeaking();
-      answerBody.textContent = `Processing: "${queryText}"...`;
+      answerBody.textContent = `Processing query: "${queryText}"...`;
       totalLatencyBadge.textContent = '⏱️ Running...';
     }
   }
@@ -631,7 +689,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (!found && wordSpans.length > 0) {
-        // Find nearest span
         let closest = wordSpans[0];
         let minDiff = Math.abs(wordSpans[0].start - charIdx);
         for (let i = 1; i < wordSpans.length; i++) {
@@ -674,7 +731,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------
-  // Analytics: P50 / P70 / P100 Calculation
+  // Scoreboard Analytics: P50 / P70 / P100 Calculation
   // -------------------------------------------------------------
   function recordLatencyMetric(latencyMs) {
     latencyHistory.push(latencyMs);
@@ -696,7 +753,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // -------------------------------------------------------------
   runBenchmarkBtn.addEventListener('click', async () => {
     runBenchmarkBtn.disabled = true;
-    runBenchmarkBtn.textContent = '⏳ Running Suite...';
+    runBenchmarkBtn.textContent = '⏳ RUNNING SUITE...';
 
     const testQueries = [
       'What causes middle back pain and muscle spasm?',
@@ -728,8 +785,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     runBenchmarkBtn.disabled = false;
-    runBenchmarkBtn.textContent = '⚡ Run 20-Query Latency Suite';
+    runBenchmarkBtn.textContent = '⚡ RUN 20-QUERY SUITE';
   });
+
+  // Submit Run Button Handler
+  if (submitRunBtn) {
+    submitRunBtn.addEventListener('click', () => {
+      submitRunBtn.textContent = '✓ SUBMITTED #07';
+      submitRunBtn.style.background = '#00E676';
+      setTimeout(() => {
+        submitRunBtn.textContent = 'SUBMIT RUN ↗';
+        submitRunBtn.style.background = '#FF7A00';
+      }, 3000);
+    });
+  }
 
   // -------------------------------------------------------------
   // Input Event Listeners
@@ -742,8 +811,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') sendTextQuery(textQueryInput.value);
   });
 
-  // Sample Query Chips
-  document.querySelectorAll('.chip, .chip-btn').forEach((chip) => {
+  // Prompt Chips
+  document.querySelectorAll('.chip').forEach((chip) => {
     chip.addEventListener('click', () => {
       const query = chip.getAttribute('data-query');
       textQueryInput.value = query;
