@@ -1,0 +1,21 @@
+# Large Parquet dataset (3.5GB)
+data/hintrain.parquet
+
+# Environment variables & API keys
+.env
+.env.local
+
+# Python venv & caches
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.log
+
+# Qdrant lock
+qdrant_storage/.lock
+
+# Vercel
+.vercel/
