@@ -10,7 +10,6 @@ import time
 import logging
 from typing import List, Dict, Any, Tuple, Optional
 from pydantic import BaseModel
-from sentence_transformers import SentenceTransformer
 from src.retriever import RetrievedDocument
 from src.config import (
     GUARDRAIL_SIMILARITY_THRESHOLD,
@@ -37,12 +36,8 @@ class GuardrailsEngine:
     Multi-layer safety, security, and hallucination verification engine.
     """
 
-    def __init__(self, embedder: Optional[SentenceTransformer] = None):
-        if embedder:
-            self.embedder = embedder
-        else:
-            self.embedder = SentenceTransformer(EMBEDDING_MODEL_NAME, device="cpu")
-
+    def __init__(self, embedder: Optional[Any] = None):
+        self.embedder = embedder
         # Compile injection patterns
         self.injection_patterns = [
             re.compile(r"ignore\s+(all\s+)?(previous|prior)\s+instructions", re.I),
@@ -122,9 +117,7 @@ class GuardrailsEngine:
                 latency_ms=(time.time() - t0) * 1000
             )
 
-        # 1. Fast lexical overlap & n-gram containment check
         answer_words = set(re.findall(r'\w+', answer.lower()))
-        # Exclude common stopwords
         stopwords = {"the", "a", "an", "is", "in", "at", "of", "on", "and", "or", "to", "for", "with", "this", "that", "it", "as", "by", "from"}
         meaningful_words = answer_words - stopwords
 
@@ -141,11 +134,8 @@ class GuardrailsEngine:
         found_count = sum(1 for w in meaningful_words if w in all_context_text)
         lexical_grounding_ratio = found_count / max(1, len(meaningful_words))
 
-        # 2. Semantic consistency score
-        # For sub-millisecond execution, blend lexical ratio with top retrieval score
         top_score = retrieved_docs[0].score if retrieved_docs else 0.0
         combined_grounding = (lexical_grounding_ratio * 0.6) + (min(1.0, top_score) * 0.4)
-
         is_grounded = combined_grounding >= GUARDRAIL_GROUNDING_THRESHOLD
 
         elapsed = (time.time() - t0) * 1000

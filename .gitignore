@@ -19,3 +19,4 @@ qdrant_storage/.lock
 
 # Vercel
 .vercel/
+.vercel
