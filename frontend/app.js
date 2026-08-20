@@ -2,6 +2,8 @@
  * Voice-Enabled RAG Client-Side Application
  * Handles Push-To-Talk Audio, Real-time Waveforms, Multi-Strategy REST API,
  * Latency Stopwatch Visualization, and P50/P70/P100 Analytics.
+ *
+ * STT Strategy: Browser Web Speech API (primary) → Sarvam saaras:v3 (fallback)
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -45,16 +47,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // State
   let isRecording = false;
-  let mediaRecorder = null;
-  let audioChunks = [];
   let audioContext = null;
   let analyser = null;
   let animationFrameId = null;
   let latencyHistory = [];
+  let micStream = null;
+
+  // Web Speech API support detection
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const hasBrowserSTT = !!SpeechRecognition;
+  let recognition = null;
+  let sttStartTime = 0;
+
+  // MediaRecorder for Sarvam fallback
+  let mediaRecorder = null;
+  let audioChunks = [];
 
   // Initialize Canvas
   const canvasCtx = waveformCanvas.getContext('2d');
   drawEmptyWaveform();
+
+  // Update status text based on STT engine
+  if (hasBrowserSTT) {
+    micStatusText.textContent = 'Click to Speak (Browser Speech Recognition)';
+  } else {
+    micStatusText.textContent = 'Click or Hold to Speak (Sarvam saaras:v3 STT)';
+  }
 
   function drawEmptyWaveform() {
     canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.3)';
@@ -98,12 +116,8 @@ document.addEventListener('DOMContentLoaded', () => {
       for (let i = 0; i < bufferLength; i++) {
         const v = dataArray[i] / 128.0;
         const y = (v * waveformCanvas.height) / 2;
-
-        if (i === 0) {
-          canvasCtx.moveTo(x, y);
-        } else {
-          canvasCtx.lineTo(x, y);
-        }
+        if (i === 0) canvasCtx.moveTo(x, y);
+        else canvasCtx.lineTo(x, y);
         x += sliceWidth;
       }
 
@@ -113,77 +127,194 @@ document.addEventListener('DOMContentLoaded', () => {
     draw();
   }
 
+  function stopVisualization() {
+    cancelAnimationFrame(animationFrameId);
+    if (audioContext && audioContext.state !== 'closed') {
+      audioContext.close().catch(() => {});
+      audioContext = null;
+    }
+    if (micStream) {
+      micStream.getTracks().forEach(t => t.stop());
+      micStream = null;
+    }
+    drawEmptyWaveform();
+  }
+
   // -------------------------------------------------------------
-  // Microphone Push-to-Talk Recording
+  // Primary STT: Browser Web Speech API
   // -------------------------------------------------------------
-  async function startRecording() {
+  function startBrowserSTT() {
+    if (isRecording) return;
+    isRecording = true;
+    sttStartTime = performance.now();
+
+    recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    recognition.continuous = false;
+
+    micWrapper.classList.add('recording');
+    micStatusText.textContent = '🎤 Listening... Speak now';
+    micStatusText.style.color = '#f43f5e';
+
+    // Start mic for waveform visualization
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      micStream = stream;
+      visualizeWaveform(stream);
+    }).catch(() => {});
+
+    let finalTranscript = '';
+
+    recognition.onresult = (event) => {
+      let interimText = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interimText += transcript;
+        }
+      }
+      // Show live interim transcript in input box
+      textQueryInput.value = finalTranscript || interimText;
+      micStatusText.textContent = `🎤 "${finalTranscript || interimText}"`;
+    };
+
+    recognition.onend = () => {
+      const sttMs = performance.now() - sttStartTime;
+      isRecording = false;
+      micWrapper.classList.remove('recording');
+      stopVisualization();
+
+      if (finalTranscript.trim()) {
+        micStatusText.textContent = `✅ Heard: "${finalTranscript.trim()}"`;
+        micStatusText.style.color = '#22c55e';
+        textQueryInput.value = finalTranscript.trim();
+        // Automatically send query
+        sendTextQueryWithSTTLatency(finalTranscript.trim(), sttMs);
+      } else {
+        micStatusText.textContent = 'No speech detected. Try again.';
+        micStatusText.style.color = '#f59e0b';
+      }
+    };
+
+    recognition.onerror = (event) => {
+      console.warn('Web Speech API error:', event.error);
+      isRecording = false;
+      micWrapper.classList.remove('recording');
+      stopVisualization();
+
+      if (event.error === 'not-allowed') {
+        micStatusText.textContent = '⚠️ Microphone permission denied.';
+        micStatusText.style.color = '#f43f5e';
+      } else {
+        micStatusText.textContent = `Speech error: ${event.error}. Try again.`;
+        micStatusText.style.color = '#f59e0b';
+      }
+    };
+
+    recognition.start();
+  }
+
+  function stopBrowserSTT() {
+    if (!isRecording || !recognition) return;
+    recognition.stop();
+  }
+
+  // -------------------------------------------------------------
+  // Fallback STT: Sarvam API via MediaRecorder
+  // -------------------------------------------------------------
+  async function startSarvamRecording() {
     if (isRecording) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStream = stream;
       isRecording = true;
       audioChunks = [];
       micWrapper.classList.add('recording');
-      micStatusText.textContent = 'Listening... Speak in Hindi or English';
+      micStatusText.textContent = '🎤 Recording... Release to transcribe (Sarvam)';
       micStatusText.style.color = '#f43f5e';
+      sttStartTime = performance.now();
 
       visualizeWaveform(stream);
 
-      mediaRecorder = new MediaRecorder(stream);
+      // Use webm/opus codec which Sarvam accepts
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+
+      mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) audioChunks.push(event.data);
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-        stream.getTracks().forEach((track) => track.stop());
-        if (audioContext && audioContext.state !== 'closed') {
-          audioContext.close();
-        }
-        cancelAnimationFrame(animationFrameId);
-        drawEmptyWaveform();
-        await sendAudioQuery(audioBlob);
+        stopVisualization();
+        const audioBlob = new Blob(audioChunks, { type: mimeType });
+        await sendAudioQuery(audioBlob, mimeType);
       };
 
       mediaRecorder.start();
     } catch (err) {
       console.warn('Microphone access denied/unavailable:', err);
-      micStatusText.textContent = 'Microphone unavailable. Please type your query.';
+      micStatusText.textContent = '⚠️ Microphone unavailable. Please type your query.';
       micStatusText.style.color = '#f59e0b';
       isRecording = false;
     }
   }
 
-  function stopRecording() {
+  function stopSarvamRecording() {
     if (!isRecording) return;
     isRecording = false;
     micWrapper.classList.remove('recording');
-    micStatusText.textContent = 'Transcribing voice with Sarvam AI...';
+    micStatusText.textContent = '⏳ Transcribing with Sarvam AI...';
     micStatusText.style.color = '#06b6d4';
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       mediaRecorder.stop();
     }
   }
 
-  // Mic Click / Hold Listeners
-  micBtn.addEventListener('mousedown', startRecording);
-  micBtn.addEventListener('mouseup', stopRecording);
-  micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
-  micBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
+  // -------------------------------------------------------------
+  // Unified Mic Button Handler (Click to toggle)
+  // -------------------------------------------------------------
+  micBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
 
-  // Toggle mode on click if user clicks once
-  micBtn.addEventListener('click', () => {
     if (isRecording) {
-      stopRecording();
+      // Stop whichever is running
+      if (hasBrowserSTT) {
+        stopBrowserSTT();
+      } else {
+        stopSarvamRecording();
+      }
     } else {
-      startRecording();
-      setTimeout(() => { if (isRecording) stopRecording(); }, 4000);
+      // Start preferred STT
+      if (hasBrowserSTT) {
+        startBrowserSTT();
+      } else {
+        startSarvamRecording();
+        // Auto-stop after 5 seconds
+        setTimeout(() => { if (isRecording) stopSarvamRecording(); }, 5000);
+      }
     }
   });
+
+  // Prevent double-firing from mousedown/mouseup + click
+  micBtn.addEventListener('mousedown', (e) => e.preventDefault());
+  micBtn.addEventListener('mouseup', (e) => e.preventDefault());
+  micBtn.addEventListener('touchstart', (e) => e.preventDefault());
+  micBtn.addEventListener('touchend', (e) => e.preventDefault());
 
   // -------------------------------------------------------------
   // API Query Dispatchers
   // -------------------------------------------------------------
   async function sendTextQuery(queryText) {
+    await sendTextQueryWithSTTLatency(queryText, 0);
+  }
+
+  async function sendTextQueryWithSTTLatency(queryText, sttMs) {
     if (!queryText.trim()) return;
 
     setLoadingState(true, queryText);
@@ -204,19 +335,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const data = await response.json();
+      // Override STT latency with actual browser STT time
+      if (sttMs > 0) {
+        data.latency.stt_ms = Math.round(sttMs * 100) / 100;
+        data.latency.total_pipeline_ms += sttMs;
+      }
       renderRAGResult(data);
     } catch (err) {
       renderError(err.message);
     } finally {
       setLoadingState(false);
+      if (hasBrowserSTT) {
+        micStatusText.textContent = 'Click to Speak (Browser Speech Recognition)';
+      } else {
+        micStatusText.textContent = 'Click or Hold to Speak (Sarvam saaras:v3 STT)';
+      }
+      micStatusText.style.color = '#9ca3af';
     }
   }
 
-  async function sendAudioQuery(audioBlob) {
+  async function sendAudioQuery(audioBlob, mimeType) {
     setLoadingState(true, 'Transcribing & Processing voice input...');
     const formData = new FormData();
-    formData.append('audio', audioBlob, 'speech_query.wav');
+    const ext = mimeType.includes('webm') ? 'webm' : 'wav';
+    formData.append('audio', audioBlob, `speech_query.${ext}`);
     formData.append('language', 'hi-IN');
+    formData.append('strategy', strategySelect.value);
     formData.append('use_cross_encoder', rerankToggle.checked);
     formData.append('top_k', 5);
 
@@ -228,12 +372,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (!response.ok) throw new Error(`Voice HTTP error! status: ${response.status}`);
       const data = await response.json();
+      textQueryInput.value = data.query;
       renderRAGResult(data);
     } catch (err) {
       renderError(err.message);
     } finally {
       setLoadingState(false);
-      micStatusText.textContent = 'Click or Hold to Speak (Sarvam saaras:v3 STT)';
+      micStatusText.textContent = hasBrowserSTT
+        ? 'Click to Speak (Browser Speech Recognition)'
+        : 'Click or Hold to Speak (Sarvam saaras:v3 STT)';
       micStatusText.style.color = '#9ca3af';
     }
   }
