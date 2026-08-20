@@ -100,6 +100,8 @@ class GroqLLMClient:
                     temperature=temperature,
                 )
                 answer = completion.choices[0].message.content.strip()
+                # Strip Qwen <think>...</think> reasoning blocks
+                answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL).strip()
                 finish_reason = completion.choices[0].finish_reason or "stop"
                 elapsed_ms = (time.time() - t0) * 1000
                 tokens = completion.usage.total_tokens if completion.usage else len(answer.split())

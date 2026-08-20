@@ -22,8 +22,8 @@ SARVAM_MODEL = "saaras:v3"
 SARVAM_STT_ENDPOINT = "https://api.sarvam.ai/speech-to-text"
 
 # LLM Models on Groq Cloud
-GROQ_MODEL_FAST = "llama-3.1-8b-instant"
-GROQ_MODEL_SMART = "llama-3.3-70b-versatile"
+GROQ_MODEL_FAST = "allam-2-7b"
+GROQ_MODEL_SMART = "qwen/qwen3.6-27b"
 
 # Embedding Model Configuration
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
